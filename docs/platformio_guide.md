@@ -45,21 +45,18 @@ rebuild the project when sources change.
 
 ### Execute the Simulator
 
-Use PlatformIO's custom `run` target (provided in `scripts/run.py`) to execute the freshly built
-binary without leaving the CLI:
+Use PlatformIO's `run` target to execute the freshly built binary:
 
 ```bash
 platformio run -t run
 ```
 
-The helper script ensures the program is rebuilt if necessary and then launches it. You can also
-invoke the executable manually from the build directory if you prefer:
+The program behaves identically to invoking the executable manually. You can also run it directly
+from the build directory if you prefer:
 
 ```bash
 .pio/build/native/program
 ```
-
-On Windows, append `.exe` to the program path when launching the binary manually.
 
 ### Clean the Build Artifacts
 
