@@ -9,6 +9,11 @@
 #include "input.h"
 #include "uart.h"
 
+/*
+ * Entry point for the simulator. The main loop continuously reads commands
+ * from the UART abstraction and forwards them to the game state machine until
+ * the player issues an exit request or the input stream terminates.
+ */
 int main(void) {
     hal_init();
     buzzer_init();

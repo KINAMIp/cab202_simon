@@ -8,6 +8,10 @@
 #include "hal.h"
 #include "util.h"
 
+/*
+ * Parse a decimal byte value from the provided text. Returns false when the
+ * token is missing, out of range, or contains trailing garbage.
+ */
 static bool parse_uint8(const char *text, uint8_t *out) {
     char *end = NULL;
     long value = strtol(text, &end, 10);
@@ -27,6 +31,10 @@ static bool parse_uint8(const char *text, uint8_t *out) {
     return true;
 }
 
+/*
+ * Helper that copies an error message into the caller-provided buffer while
+ * respecting the buffer size.
+ */
 static void set_error(char *buf, size_t len, const char *message) {
     if (!buf || len == 0u) {
         return;
@@ -34,6 +42,10 @@ static void set_error(char *buf, size_t len, const char *message) {
     util_strlcpy(buf, message, len);
 }
 
+/*
+ * Convert the supplied command line into an input_event_t. The parser accepts a
+ * textual interface that mirrors the serial commands used on hardware.
+ */
 bool input_parse_line(const char *line, input_event_t *event, char *error_buf, size_t error_buf_len) {
     if (!line || !event) {
         return false;
@@ -185,7 +197,7 @@ bool input_parse_line(const char *line, input_event_t *event, char *error_buf, s
         return true;
     }
     /* allow shorthand button commands 1-4 */
-    if (strlen(command) == 1 && command[0] >= '1' && command[0] <= '4') {
+    if (strlen(command) == 1u && command[0] >= '1' && command[0] <= '4') {
         event->type = INPUT_EVENT_PRESS;
         event->data.press.button = (uint8_t)(command[0] - '0');
         return true;
@@ -194,6 +206,9 @@ bool input_parse_line(const char *line, input_event_t *event, char *error_buf, s
     return false;
 }
 
+/*
+ * Emit the help text that documents the available simulator commands.
+ */
 void input_print_help(void) {
     printf("Commands:\n");
     printf("  help                Show this help text\n");
