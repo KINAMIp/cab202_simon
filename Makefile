@@ -1,22 +1,22 @@
-MCU = atmega328p
-F_CPU = 16000000UL
+CC = gcc
+CFLAGS = -Wall -Wextra -std=c11 -O2
 TARGET = simon
 
-CC = avr-gcc
-OBJCOPY = avr-objcopy
-CFLAGS = -mmcu=$(MCU) -DF_CPU=$(F_CPU) -Os -Wall -Wextra -std=gnu11
-LDFLAGS = -mmcu=$(MCU)
-
-SRCS = src/main.c
+SRCS = $(wildcard src/*.c)
 OBJS = $(SRCS:.c=.o)
 
-all: $(TARGET).hex
+INCLUDES = -Iinclude
+LDLIBS = -lm
 
-$(TARGET).elf: $(SRCS)
-	$(CC) $(CFLAGS) $(SRCS) -o $(TARGET).elf $(LDFLAGS)
+all: $(TARGET)
 
-$(TARGET).hex: $(TARGET).elf
-	$(OBJCOPY) -O ihex -R .eeprom $(TARGET).elf $(TARGET).hex
+$(TARGET): $(OBJS)
+	$(CC) $(CFLAGS) $(OBJS) $(LDLIBS) -o $@
+
+src/%.o: src/%.c
+	$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 clean:
-	rm -f $(TARGET).elf $(TARGET).hex $(OBJS)
+	rm -f $(TARGET) $(OBJS)
+
+.PHONY: all clean
