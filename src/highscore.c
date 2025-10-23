@@ -5,6 +5,9 @@
 
 #include "util.h"
 
+/*
+ * Shift entries down from the provided position to make space for a new record.
+ */
 static void shift_down(highscore_table_t *table, size_t pos) {
     if (!table || table->count >= SIMON_MAX_HIGHSCORES) {
         return;
@@ -14,6 +17,9 @@ static void shift_down(highscore_table_t *table, size_t pos) {
     }
 }
 
+/*
+ * Prepare an empty high-score table.
+ */
 void highscore_init(highscore_table_t *table) {
     if (!table) {
         return;
@@ -21,6 +27,9 @@ void highscore_init(highscore_table_t *table) {
     table->count = 0u;
 }
 
+/*
+ * Clear any recorded scores while keeping the table allocated.
+ */
 void highscore_reset(highscore_table_t *table) {
     if (!table) {
         return;
@@ -28,6 +37,10 @@ void highscore_reset(highscore_table_t *table) {
     table->count = 0u;
 }
 
+/*
+ * Try to insert a new score in descending order. Lower scores are discarded
+ * when the table is already full.
+ */
 bool highscore_try_insert(highscore_table_t *table, const char *name, uint8_t score) {
     if (!table || !name) {
         return false;
@@ -52,13 +65,16 @@ bool highscore_try_insert(highscore_table_t *table, const char *name, uint8_t sc
     return true;
 }
 
+/*
+ * Print the stored high-score list for debugging in the simulator.
+ */
 void highscore_print(const highscore_table_t *table) {
     if (!table || table->count == 0u) {
         printf("No high scores recorded yet.\n");
         return;
     }
     printf("High Scores:\n");
-    for (size_t i = 0; i < table->count; ++i) {
-        printf(" %zu. %-*s %u\n", i + 1, SIMON_MAX_NAME_LENGTH, table->entries[i].name, table->entries[i].score);
+    for (size_t i = 0u; i < table->count; ++i) {
+        printf(" %zu. %-*s %u\n", i + 1u, SIMON_MAX_NAME_LENGTH, table->entries[i].name, table->entries[i].score);
     }
 }

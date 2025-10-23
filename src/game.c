@@ -9,6 +9,11 @@
 #include "uart.h"
 #include "util.h"
 
+/*
+ * Apply a pending RNG seed if one was staged through the command interface.
+ * This allows the tutor to control the sequence deterministically between
+ * rounds without interrupting gameplay mid-round.
+ */
 static void apply_pending_seed(game_t *game) {
     if (game->seed_pending) {
         lfsr_seed(&game->rng, game->pending_seed);
@@ -17,25 +22,30 @@ static void apply_pending_seed(game_t *game) {
     }
 }
 
+/*
+ * Begin playback of the Simon sequence. The next pseudo-random button is
+ * appended, the level is incremented, and each step is shown on the simulated
+ * display and buzzer with delays controlled by the HAL configuration.
+ */
 static void start_playback(game_t *game) {
     apply_pending_seed(game);
     if (game->level >= game->config->max_sequence_length) {
         uart_writeln("[Game] Maximum sequence length reached. Resetting level.");
-        game->level = 0;
+        game->level = 0u;
     }
     uint8_t next_button = lfsr_next_button(&game->rng);
     game->sequence[game->level] = next_button;
     game->level++;
     game->state = GAME_STATE_PLAYBACK;
-    game->step_index = 0;
+    game->step_index = 0u;
     uart_writef("[Game] Playing level %u\n", game->level);
     display_show_level(game->level);
     uint32_t delay = hal_current_delay_ms();
-    uint32_t tone_duration = delay / 2u;
+    uint32_t tone_duration = delay >> 1;
     if (tone_duration < 100u) {
         tone_duration = 100u;
     }
-    for (uint8_t i = 0; i < game->level; ++i) {
+    for (uint8_t i = 0u; i < game->level; ++i) {
         uint8_t button = game->sequence[i];
         display_show_sequence_step(button);
         buzzer_play(button, tone_duration, hal_get_octave_shift());
@@ -45,10 +55,14 @@ static void start_playback(game_t *game) {
     }
     display_show_ready();
     game->state = GAME_STATE_AWAIT_INPUT;
-    game->step_index = 0;
+    game->step_index = 0u;
     uart_writeln("[Game] Awaiting player input...");
 }
 
+/*
+ * Handle successful input for the current step. Once the user has matched the
+ * entire sequence the next round is started automatically.
+ */
 static void handle_correct_input(game_t *game) {
     game->step_index++;
     if (game->step_index >= game->level) {
@@ -60,6 +74,10 @@ static void handle_correct_input(game_t *game) {
     }
 }
 
+/*
+ * Handle an incorrect button press. The player's score is stored for optional
+ * high-score submission and the game transitions to the idle/reset state.
+ */
 static void handle_failure(game_t *game) {
     display_show_failure();
     buzzer_silence();
@@ -75,6 +93,9 @@ static void handle_failure(game_t *game) {
     }
 }
 
+/*
+ * Initialise the game state machine with default configuration and RNG seed.
+ */
 void game_init(game_t *game) {
     if (!game) {
         return;
@@ -86,9 +107,12 @@ void game_init(game_t *game) {
     game->state = GAME_STATE_IDLE;
     game->seed_pending = false;
     game->awaiting_name = false;
-    game->last_score = 0;
+    game->last_score = 0u;
 }
 
+/*
+ * Reset the game to the idle state, preserving pending configuration changes.
+ */
 void game_reset(game_t *game) {
     if (!game) {
         return;
@@ -100,9 +124,12 @@ void game_reset(game_t *game) {
     game->last_score = 0u;
     apply_pending_seed(game);
     uart_writeln("[Game] Reset complete. Type 'start' to begin.");
-    display_show_level(0);
+    display_show_level(0u);
 }
 
+/*
+ * Output a human-readable summary of the current game state via UART.
+ */
 void game_print_status(const game_t *game) {
     if (!game) {
         return;
@@ -121,11 +148,18 @@ void game_print_status(const game_t *game) {
         case GAME_STATE_AWAIT_NAME:
             state_text = "Awaiting Name";
             break;
+        default:
+            state_text = "Unknown";
+            break;
     }
     uart_writef("[Status] Level: %u, State: %s, Delay: %ums, Octave: %+d\n",
                 game->level, state_text, hal_current_delay_ms(), hal_get_octave_shift());
 }
 
+/*
+ * Validate and process a simulated button press while the game is expecting
+ * input. Incorrect presses immediately trigger failure handling.
+ */
 static void handle_press(game_t *game, uint8_t button) {
     if (game->state != GAME_STATE_AWAIT_INPUT) {
         uart_writeln("[Game] Not ready for button input. Use 'start' to begin.");
@@ -139,7 +173,11 @@ static void handle_press(game_t *game, uint8_t button) {
     uart_writef("[Game] Button %u pressed (expected %u)\n", button, expected);
     if (button == expected) {
         display_show_sequence_step(button);
-        buzzer_play(button, hal_current_delay_ms() / 2u, hal_get_octave_shift());
+        uint32_t duration = hal_current_delay_ms() >> 1;
+        if (duration < 100u) {
+            duration = 100u;
+        }
+        buzzer_play(button, duration, hal_get_octave_shift());
         buzzer_silence();
         handle_correct_input(game);
     } else {
@@ -147,6 +185,10 @@ static void handle_press(game_t *game, uint8_t button) {
     }
 }
 
+/*
+ * Dispatch an input event to the state machine. All game behaviour originates
+ * from this handler which mirrors the interrupt-driven firmware design.
+ */
 void game_handle_event(game_t *game, const input_event_t *event) {
     if (!game || !event) {
         return;
