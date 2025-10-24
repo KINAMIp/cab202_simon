@@ -33,6 +33,18 @@
 
 #define ADC_PRESCALER_DIV16   0x04u
 
+#ifndef ADC_REFSEL_VDD_gc
+#define ADC_REFSEL_VDD_gc     ((0x00u) << ADC_REFSEL_gp)
+#endif
+
+#ifndef ADC_PRESC_DIV16_gc
+#if defined(ADC_PRESCALER_DIV16)
+#define ADC_PRESC_DIV16_gc    ((ADC_PRESCALER_DIV16) << ADC_PRESC_gp)
+#else
+#define ADC_PRESC_DIV16_gc    ((0x04u) << ADC_PRESC_gp)
+#endif
+#endif
+
 static volatile uint8_t display_left_pattern;
 static volatile uint8_t display_right_pattern;
 static volatile bool display_toggle;
@@ -134,11 +146,7 @@ void hardware_init(void)
     USART0.CTRLB = USART_RXEN_bm | USART_TXEN_bm;
 
     ADC0.CTRLA = ADC_ENABLE_bm;
-#if defined(ADC_REFSEL_VDD_gc) && defined(ADC_PRESC_DIV16_gc)
     ADC0.CTRLC = ADC_REFSEL_VDD_gc | ADC_PRESC_DIV16_gc;
-#else
-    ADC0.CTRLC = (ADC_REFSEL_VDDREF_gc << ADC_REFSEL_gp) | (ADC_PRESCALER_DIV16 << ADC_PRESC_gp);
-#endif
     ADC0.MUXPOS = ADC_MUXPOS_AIN6_gc;
 
     display_left_pattern = segment_table[0];
