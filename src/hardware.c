@@ -281,9 +281,13 @@ void hardware_display_segments(uint8_t left_digit, uint8_t right_digit)
 {
     if (left_digit < 16u) {
         display_left_pattern = segment_table[left_digit];
+    } else {
+        display_left_pattern = 0u;
     }
     if (right_digit < 16u) {
         display_right_pattern = segment_table[right_digit];
+    } else {
+        display_right_pattern = 0u;
     }
 }
 

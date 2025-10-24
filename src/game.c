@@ -29,8 +29,30 @@ static const uint8_t display_patterns[4] = {
     0x08u
 };
 
-static const uint8_t success_pattern = 0b00111111u;
+static const uint8_t success_pattern = 0b01111111u;
 static const uint8_t failure_pattern = 0b01000000u;
+
+static uint16_t playback_tone_on_duration(const simon_game_t *game)
+{
+    uint16_t half = game->playback_delay_ms >> 1u;
+    if ((game->playback_delay_ms & 0x01u) != 0u) {
+        half++;
+    }
+    if (half == 0u) {
+        half = 1u;
+    }
+    return half;
+}
+
+static uint16_t playback_tone_off_duration(const simon_game_t *game)
+{
+    uint16_t on = playback_tone_on_duration(game);
+    uint16_t off = game->playback_delay_ms - on;
+    if (off == 0u) {
+        off = 1u;
+    }
+    return off;
+}
 
 /* Append an unsigned integer to a buffer without division. */
 static void append_decimal(char *buffer, uint16_t *pos, uint16_t value)
@@ -58,13 +80,23 @@ static void append_decimal(char *buffer, uint16_t *pos, uint16_t value)
 
 static void display_level_value(uint16_t value)
 {
+    if (value >= 100u) {
+        hardware_display_pattern(success_pattern);
+        return;
+    }
+
     uint16_t remaining = value;
     uint8_t tens = 0u;
     while (remaining >= 10u) {
         remaining -= 10u;
         tens++;
     }
-    hardware_display_segments(tens, (uint8_t)remaining);
+
+    if (tens == 0u) {
+        hardware_display_segments(0xFFu, (uint8_t)remaining);
+    } else {
+        hardware_display_segments(tens, (uint8_t)remaining);
+    }
 }
 
 static void uart_send_delay(const simon_game_t *game)
@@ -206,7 +238,7 @@ static void highscores_reset(simon_game_t *game)
     while (index < SIMON_HIGHSCORE_COUNT) {
         uint8_t pos = 0u;
         while (pos < SIMON_NAME_LENGTH) {
-            game->highscores[index].name[pos] = '-';
+            game->highscores[index].name[pos] = '\0';
             pos++;
         }
         game->highscores[index].score = 0u;
@@ -238,15 +270,14 @@ static void highscores_insert(simon_game_t *game, const char *name, uint16_t sco
     }
 
     uint8_t copy_index = 0u;
-    while (copy_index < SIMON_NAME_LENGTH) {
-        if (name[copy_index] == '\0') {
-            break;
-        }
+    while (copy_index < (SIMON_NAME_LENGTH - 1u) && name[copy_index] != '\0') {
         game->highscores[position].name[copy_index] = name[copy_index];
         copy_index++;
     }
+    game->highscores[position].name[copy_index] = '\0';
+    copy_index++;
     while (copy_index < SIMON_NAME_LENGTH) {
-        game->highscores[position].name[copy_index] = ' ';
+        game->highscores[position].name[copy_index] = '\0';
         copy_index++;
     }
     game->highscores[position].score = score;
@@ -257,18 +288,20 @@ static void highscores_print(const simon_game_t *game)
 {
     uint8_t index = 0u;
     while (index < SIMON_HIGHSCORE_COUNT) {
+        const simon_highscore_t *entry = &game->highscores[index];
+        if (entry->name[0] == '\0') {
+            index++;
+            continue;
+        }
         char buffer[24];
         uint16_t pos = 0u;
-        buffer[pos++] = (char)('1' + index);
-        buffer[pos++] = '.';
-        buffer[pos++] = ' ';
         uint8_t name_index = 0u;
-        while (name_index < SIMON_NAME_LENGTH) {
-            buffer[pos++] = game->highscores[index].name[name_index];
+        while (name_index < SIMON_NAME_LENGTH && entry->name[name_index] != '\0') {
+            buffer[pos++] = entry->name[name_index];
             name_index++;
         }
         buffer[pos++] = ' ';
-        append_decimal(buffer, &pos, game->highscores[index].score);
+        append_decimal(buffer, &pos, entry->score);
         buffer[pos++] = '\0';
         hardware_uart_write_string(buffer);
         hardware_uart_write_string("\r\n");
@@ -291,6 +324,7 @@ static void reset_game(simon_game_t *game)
     game->playback_seed = game->base_seed;
     game->input_seed = game->base_seed;
     game->playback_tone_active = false;
+    game->pending_success = false;
     hardware_set_buzzer_octave_shift(game->octave_shift);
     hardware_stop_buzzer();
     hardware_display_idle_animation(0u);
@@ -305,8 +339,9 @@ static void start_round(simon_game_t *game)
     }
     game->playback_seed = game->base_seed;
     game->playback_step = 0u;
-    game->countdown_ms = game->playback_delay_ms;
+    game->countdown_ms = playback_tone_off_duration(game);
     game->playback_tone_active = false;
+    game->pending_success = false;
     game->state = SIMON_STATE_PLAYBACK;
     game->current_colour = 0u;
     hardware_set_buzzer_octave_shift(game->octave_shift);
@@ -322,6 +357,7 @@ static void begin_input_phase(simon_game_t *game)
     game->input_step = 0u;
     game->countdown_ms = 0u;
     game->playback_tone_active = false;
+    game->pending_success = false;
     hardware_stop_buzzer();
     display_level_value(game->level);
     hardware_uart_write_string("INPUT\r\n");
@@ -330,6 +366,7 @@ static void begin_input_phase(simon_game_t *game)
 /* Celebrate a successful round and schedule the next. */
 static void on_level_complete(simon_game_t *game)
 {
+    game->pending_success = false;
     game->state = SIMON_STATE_LEVEL_COMPLETE;
     game->countdown_ms = LEVEL_ADVANCE_PAUSE;
     game->last_score = game->level;
@@ -340,6 +377,7 @@ static void on_level_complete(simon_game_t *game)
 /* Record a failure and prompt for a name entry. */
 static void on_failure(simon_game_t *game)
 {
+    game->pending_success = false;
     game->state = SIMON_STATE_FAILURE;
     game->countdown_ms = FAILURE_PAUSE;
     if (game->level > 0u) {
@@ -407,7 +445,7 @@ void game_tick_1ms(simon_game_t *game)
                     hardware_stop_buzzer();
                     hardware_display_pattern(0u);
                     game->playback_tone_active = false;
-                    game->countdown_ms = game->playback_delay_ms;
+                    game->countdown_ms = playback_tone_off_duration(game);
                 } else {
                     if (game->playback_step >= game->level) {
                         begin_input_phase(game);
@@ -417,7 +455,7 @@ void game_tick_1ms(simon_game_t *game)
                         hardware_display_pattern(display_patterns[game->current_colour]);
                         game->playback_step++;
                         game->playback_tone_active = true;
-                        game->countdown_ms = game->playback_delay_ms;
+                        game->countdown_ms = playback_tone_on_duration(game);
                     }
                 }
             }
@@ -431,6 +469,15 @@ void game_tick_1ms(simon_game_t *game)
                 hardware_display_pattern(0u);
                 game->playback_tone_active = false;
                 display_level_value(game->level);
+                if (game->pending_success) {
+                    game->countdown_ms = playback_tone_off_duration(game);
+                }
+            }
+        } else if (game->pending_success && game->countdown_ms > 0u) {
+            game->countdown_ms--;
+            if (game->countdown_ms == 0u) {
+                game->pending_success = false;
+                on_level_complete(game);
             }
         }
         break;
@@ -499,21 +546,23 @@ void game_handle_button(simon_game_t *game, uint8_t button_mask)
         start_round(game);
         break;
     case SIMON_STATE_INPUT: {
+        if (game->pending_success) {
+            return;
+        }
         uint8_t expected = next_colour(&game->input_seed);
         if (button_index == expected) {
             game->input_step++;
             hardware_set_buzzer_tone(button_index);
             hardware_display_pattern(display_patterns[button_index]);
             game->playback_tone_active = true;
-            game->countdown_ms = game->playback_delay_ms;
+            game->countdown_ms = playback_tone_on_duration(game);
             if (game->input_step == game->level) {
-                hardware_stop_buzzer();
-                game->playback_tone_active = false;
-                on_level_complete(game);
+                game->pending_success = true;
             }
         } else {
             hardware_stop_buzzer();
             game->playback_tone_active = false;
+            game->pending_success = false;
             on_failure(game);
         }
         break;
