@@ -9,6 +9,6 @@
  * Values are stored as integers to comply with the embedded target restrictions
  * on floating-point usage.
  */
-const uint16_t *tone_table_base_frequencies(size_t *count);
+const uint32_t *tone_table_base_frequencies(size_t *count);
 
 #endif

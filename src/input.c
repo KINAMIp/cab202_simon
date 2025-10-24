@@ -1,224 +1,217 @@
 #include "input.h"
 
+#include <avr/io.h>
 #include <ctype.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
+#include <stddef.h>
 
 #include "hal.h"
+#include "uart.h"
 #include "util.h"
 
-/*
- * Parse a decimal byte value from the provided text. Returns false when the
- * token is missing, out of range, or contains trailing garbage.
- */
-static bool parse_uint8(const char *text, uint8_t *out) {
-    char *end = NULL;
-    long value = strtol(text, &end, 10);
-    if (text == end) {
-        return false;
-    }
-    while (*end) {
-        if (!isspace((unsigned char)*end)) {
-            return false;
-        }
-        ++end;
-    }
-    if (value < 0 || value > 255) {
-        return false;
-    }
-    *out = (uint8_t)value;
-    return true;
-}
+#define BUTTON_MASK_S1 PIN4_bm
+#define BUTTON_MASK_S2 PIN5_bm
+#define BUTTON_MASK_S3 PIN6_bm
+#define BUTTON_MASK_S4 PIN7_bm
 
-/*
- * Helper that copies an error message into the caller-provided buffer while
- * respecting the buffer size.
- */
-static void set_error(char *buf, size_t len, const char *message) {
-    if (!buf || len == 0u) {
-        return;
-    }
-    util_strlcpy(buf, message, len);
-}
+#define BUTTON_DEBOUNCE_MS 20u
+#define NAME_BUFFER_LEN (SIMON_MAX_NAME_LENGTH)
+#define SEED_BUFFER_LEN 8u
 
-/*
- * Convert the supplied command line into an input_event_t. The parser accepts a
- * textual interface that mirrors the serial commands used on hardware.
- */
-bool input_parse_line(const char *line, input_event_t *event, char *error_buf, size_t error_buf_len) {
-    if (!line || !event) {
-        return false;
-    }
-    event->type = INPUT_EVENT_INVALID;
-    char copy[128];
-    util_strlcpy(copy, line, sizeof(copy));
-    util_trim(copy);
-    if (copy[0] == '\0') {
-        set_error(error_buf, error_buf_len, "Empty command. Type 'help' for options.");
-        return false;
-    }
-    char *command = strtok(copy, " \t");
-    if (!command) {
-        return false;
-    }
-    for (char *p = command; *p; ++p) {
-        *p = (char)tolower((unsigned char)*p);
-    }
-    if (strcmp(command, "help") == 0) {
-        event->type = INPUT_EVENT_HELP;
-        return true;
-    }
-    if (strcmp(command, "start") == 0) {
-        event->type = INPUT_EVENT_START;
-        return true;
-    }
-    if (strcmp(command, "press") == 0) {
-        char *token = strtok(NULL, " \t");
-        if (!token) {
-            set_error(error_buf, error_buf_len, "Usage: press <1-4>");
-            return false;
-        }
-        uint8_t value = 0u;
-        if (!parse_uint8(token, &value) || value == 0u || value > 4u) {
-            set_error(error_buf, error_buf_len, "Button must be between 1 and 4.");
-            return false;
-        }
-        event->type = INPUT_EVENT_PRESS;
-        event->data.press.button = value;
-        return true;
-    }
-    if (strcmp(command, "delay") == 0) {
-        char *token = strtok(NULL, " \t");
-        if (!token) {
-            set_error(error_buf, error_buf_len, "Usage: delay <0-9>");
-            return false;
-        }
-        uint8_t value = 0u;
-        if (!parse_uint8(token, &value)) {
-            set_error(error_buf, error_buf_len, "Delay index must be numeric.");
-            return false;
-        }
-        if (value >= config_get()->delay_steps) {
-            set_error(error_buf, error_buf_len, "Delay index out of range.");
-            return false;
-        }
-        event->type = INPUT_EVENT_SET_DELAY;
-        event->data.delay.delay_index = value;
-        return true;
-    }
-    if (strcmp(command, "octave") == 0) {
-        char *token = strtok(NULL, " \t");
-        if (!token) {
-            set_error(error_buf, error_buf_len, "Usage: octave <up|down|set> [value]");
-            return false;
-        }
-        for (char *p = token; *p; ++p) {
-            *p = (char)tolower((unsigned char)*p);
-        }
-        if (strcmp(token, "up") == 0) {
-            event->type = INPUT_EVENT_OCTAVE_UP;
-            return true;
-        }
-        if (strcmp(token, "down") == 0) {
-            event->type = INPUT_EVENT_OCTAVE_DOWN;
-            return true;
-        }
-        if (strcmp(token, "set") == 0) {
-            char *value_token = strtok(NULL, " \t");
-            if (!value_token) {
-                set_error(error_buf, error_buf_len, "Usage: octave set <value>");
-                return false;
+typedef struct {
+    uint8_t mask;
+    uint8_t id;
+    bool pressed;
+    uint32_t last_change;
+} button_state_t;
+
+static button_state_t g_buttons[] = {
+    {BUTTON_MASK_S1, 1u, false, 0u},
+    {BUTTON_MASK_S2, 2u, false, 0u},
+    {BUTTON_MASK_S3, 3u, false, 0u},
+    {BUTTON_MASK_S4, 4u, false, 0u},
+};
+
+static char g_name_buffer[NAME_BUFFER_LEN + 1];
+static uint8_t g_name_len = 0u;
+static bool g_collecting_name = false;
+
+static char g_seed_buffer[SEED_BUFFER_LEN + 1];
+static uint8_t g_seed_len = 0u;
+
+static bool process_button(button_state_t *btn, input_event_t *event) {
+    bool current = !(PORTA.IN & btn->mask);
+    uint32_t now = hal_millis();
+    if (current != btn->pressed) {
+        if ((now - btn->last_change) >= BUTTON_DEBOUNCE_MS) {
+            btn->pressed = current;
+            btn->last_change = now;
+            if (current) {
+                event->type = INPUT_EVENT_PRESS;
+                event->data.press.button = btn->id;
+                return true;
             }
-            long value = strtol(value_token, &value_token, 10);
-            if (*value_token != '\0') {
-                set_error(error_buf, error_buf_len, "Invalid octave value.");
-                return false;
-            }
-            if (value < SIMON_MIN_OCTAVE_SHIFT || value > SIMON_MAX_OCTAVE_SHIFT) {
-                set_error(error_buf, error_buf_len, "Octave out of range.");
-                return false;
-            }
-            if (value > hal_get_octave_shift()) {
-                event->type = INPUT_EVENT_OCTAVE_UP;
-            } else if (value < hal_get_octave_shift()) {
-                event->type = INPUT_EVENT_OCTAVE_DOWN;
-            } else {
-                event->type = INPUT_EVENT_INVALID;
-                set_error(error_buf, error_buf_len, "Octave already set to requested value.");
-                return false;
-            }
-            return true;
         }
-        set_error(error_buf, error_buf_len, "Unknown octave command. Use 'octave up' or 'octave down'.");
-        return false;
     }
-    if (strcmp(command, "reset") == 0) {
-        event->type = INPUT_EVENT_RESET;
-        return true;
-    }
-    if (strcmp(command, "seed") == 0) {
-        char *token = strtok(NULL, " \t");
-        if (!token) {
-            set_error(error_buf, error_buf_len, "Usage: seed <hex value>");
-            return false;
-        }
-        bool ok = false;
-        uint32_t seed = util_parse_hex(token, &ok);
-        if (!ok) {
-            set_error(error_buf, error_buf_len, "Seed must be a hexadecimal number.");
-            return false;
-        }
-        event->type = INPUT_EVENT_SEED;
-        event->data.seed.seed = seed;
-        return true;
-    }
-    if (strcmp(command, "highscores") == 0 || strcmp(command, "scores") == 0) {
-        event->type = INPUT_EVENT_HIGHSCORES;
-        return true;
-    }
-    if (strcmp(command, "name") == 0) {
-        char *token = strtok(NULL, "");
-        if (!token) {
-            set_error(error_buf, error_buf_len, "Usage: name <text>");
-            return false;
-        }
-        util_trim(token);
-        if (token[0] == '\0') {
-            set_error(error_buf, error_buf_len, "Name cannot be empty.");
-            return false;
-        }
-        event->type = INPUT_EVENT_SUBMIT_NAME;
-        util_strlcpy(event->data.name.name, token, sizeof(event->data.name.name));
-        return true;
-    }
-    if (strcmp(command, "exit") == 0 || strcmp(command, "quit") == 0) {
-        event->type = INPUT_EVENT_EXIT;
-        return true;
-    }
-    /* allow shorthand button commands 1-4 */
-    if (strlen(command) == 1u && command[0] >= '1' && command[0] <= '4') {
-        event->type = INPUT_EVENT_PRESS;
-        event->data.press.button = (uint8_t)(command[0] - '0');
-        return true;
-    }
-    set_error(error_buf, error_buf_len, "Unknown command. Type 'help' for instructions.");
     return false;
 }
 
-/*
- * Emit the help text that documents the available simulator commands.
- */
-void input_print_help(void) {
-    printf("Commands:\n");
-    printf("  help                Show this help text\n");
-    printf("  start               Begin a new round\n");
-    printf("  press <1-4>         Simulate a button press (shorthand: just type 1-4)\n");
-    printf("  delay <0-%u>        Set playback delay index\n", config_get()->delay_steps - 1u);
-    printf("  octave up|down      Adjust buzzer octave\n");
-    printf("  reset               Reset the game\n");
-    printf("  seed <hex>          Seed the random sequence generator\n");
-    printf("  highscores          Show the high-score table\n");
-    printf("  name <text>         Submit a name after winning\n");
-    printf("  exit                Quit the program\n");
+static bool hex_char_value(char c, uint8_t *value) {
+    if (c >= '0' && c <= '9') {
+        *value = (uint8_t)(c - '0');
+        return true;
+    }
+    if (c >= 'a' && c <= 'f') {
+        *value = (uint8_t)(c - 'a' + 10);
+        return true;
+    }
+    if (c >= 'A' && c <= 'F') {
+        *value = (uint8_t)(c - 'A' + 10);
+        return true;
+    }
+    return false;
+}
+
+static bool emit_seed_event(input_event_t *event) {
+    if (g_seed_len == 0u) {
+        return false;
+    }
+    uint32_t seed = 0u;
+    for (uint8_t i = 0u; i < g_seed_len; ++i) {
+        uint8_t value = 0u;
+        if (!hex_char_value(g_seed_buffer[i], &value)) {
+            return false;
+        }
+        seed = (seed << 4) | value;
+    }
+    event->type = INPUT_EVENT_SEED;
+    event->data.seed.seed = seed;
+    g_seed_len = 0u;
+    return true;
+}
+
+static bool emit_name_event(input_event_t *event) {
+    if (!g_collecting_name || g_name_len == 0u) {
+        return false;
+    }
+    event->type = INPUT_EVENT_SUBMIT_NAME;
+    g_name_buffer[g_name_len] = '\0';
+    util_strlcpy(event->data.name.name, g_name_buffer, sizeof(event->data.name.name));
+    g_collecting_name = false;
+    g_name_len = 0u;
+    return true;
+}
+
+void input_init(void) {
+    uint8_t mask = BUTTON_MASK_S1 | BUTTON_MASK_S2 | BUTTON_MASK_S3 | BUTTON_MASK_S4;
+    PORTA.DIRCLR = mask;
+    PORTA.PIN4CTRL = PORT_PULLUPEN_bm;
+    PORTA.PIN5CTRL = PORT_PULLUPEN_bm;
+    PORTA.PIN6CTRL = PORT_PULLUPEN_bm;
+    PORTA.PIN7CTRL = PORT_PULLUPEN_bm;
+
+    g_seed_len = 0u;
+    g_collecting_name = false;
+    g_name_len = 0u;
+}
+
+static bool process_uart_char(char ch, input_event_t *event) {
+    switch (ch) {
+        case '1':
+        case 'e':
+        case 'E':
+            event->type = INPUT_EVENT_PRESS;
+            event->data.press.button = 1u;
+            return true;
+        case '2':
+        case 'r':
+        case 'R':
+            event->type = INPUT_EVENT_PRESS;
+            event->data.press.button = 2u;
+            return true;
+        case '3':
+        case 'f':
+        case 'F':
+            event->type = INPUT_EVENT_PRESS;
+            event->data.press.button = 3u;
+            return true;
+        case '4':
+        case 'g':
+        case 'G':
+            event->type = INPUT_EVENT_PRESS;
+            event->data.press.button = 4u;
+            return true;
+        case 'q':
+        case 'Q':
+            event->type = INPUT_EVENT_OCTAVE_DOWN;
+            return true;
+        case 'w':
+        case 'W':
+            event->type = INPUT_EVENT_OCTAVE_UP;
+            return true;
+        case 'k':
+        case 'K':
+            event->type = INPUT_EVENT_RESET;
+            return true;
+        case 's':
+        case 'S':
+            return emit_seed_event(event);
+        case 'n':
+        case 'N':
+            g_collecting_name = true;
+            g_name_len = 0u;
+            return false;
+        case 'h':
+        case 'H':
+            event->type = INPUT_EVENT_HIGHSCORES;
+            return true;
+        case '\r':
+        case '\n':
+            if (emit_name_event(event)) {
+                return true;
+            }
+            if (emit_seed_event(event)) {
+                return true;
+            }
+            return false;
+        default:
+            break;
+    }
+
+    if (g_collecting_name) {
+        if (g_name_len < NAME_BUFFER_LEN && ch >= 32 && ch < 127) {
+            g_name_buffer[g_name_len++] = ch;
+        }
+        return false;
+    }
+
+    uint8_t value = 0u;
+    if (hex_char_value(ch, &value)) {
+        if (g_seed_len < SEED_BUFFER_LEN) {
+            g_seed_buffer[g_seed_len++] = ch;
+        }
+        return false;
+    }
+
+    return false;
+}
+
+bool input_poll(input_event_t *event) {
+    hal_sample_potentiometer();
+
+    for (size_t i = 0u; i < sizeof(g_buttons) / sizeof(g_buttons[0]); ++i) {
+        if (process_button(&g_buttons[i], event)) {
+            return true;
+        }
+    }
+
+    char ch;
+    while (uart_read_char(&ch)) {
+        if (process_uart_char(ch, event)) {
+            return true;
+        }
+    }
+
+    return false;
 }

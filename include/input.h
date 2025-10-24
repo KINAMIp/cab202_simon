@@ -40,7 +40,7 @@ typedef struct {
     } data;
 } input_event_t;
 
-bool input_parse_line(const char *line, input_event_t *event, char *error_buf, size_t error_buf_len);
-void input_print_help(void);
+void input_init(void);
+bool input_poll(input_event_t *event);
 
 #endif

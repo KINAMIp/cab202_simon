@@ -1,53 +1,84 @@
 #include "buzzer.h"
 
-#include <stdio.h>
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <stdbool.h>
+#include <stddef.h>
 
 #include "tone_table.h"
 
-/*
- * No hardware peripherals are initialised in the host build, but the function is
- * kept to mirror the microcontroller project structure.
- */
-void buzzer_init(void) {
-    /* Intentional no-op for the simulator environment. */
-}
+#define BUZZER_PIN PIN0_bm
 
-/*
- * Apply an octave shift to the supplied base frequency. Multiplication and
- * division by powers of two are implemented with bit shifts to avoid costly
- * arithmetic on the embedded target.
- */
-static uint32_t apply_octave(uint32_t frequency, int8_t octave_shift) {
+static volatile bool g_buzzer_active = false;
+
+static uint32_t apply_octave(uint32_t frequency_centi, int8_t octave_shift) {
     if (octave_shift > 0) {
-        return frequency << octave_shift;
+        return frequency_centi << octave_shift;
     }
     if (octave_shift < 0) {
         uint8_t shift = (uint8_t)(-octave_shift);
-        return frequency >> shift;
+        return frequency_centi >> shift;
     }
-    return frequency;
+    return frequency_centi;
 }
 
-/*
- * Emit a textual representation of the requested tone. The host build prints
- * the frequency for debugging, while the embedded target would trigger the
- * physical buzzer hardware.
- */
+static uint16_t frequency_to_top(uint32_t frequency_centi) {
+    if (frequency_centi == 0u) {
+        return 0u;
+    }
+    uint32_t numerator = F_CPU * 100UL;
+    uint32_t denominator = 2UL * frequency_centi;
+    if (denominator == 0u) {
+        return 0u;
+    }
+    uint32_t value = (numerator + (denominator / 2u)) / denominator;
+    if (value == 0u) {
+        return 0u;
+    }
+    if (value > 0u) {
+        value -= 1u;
+    }
+    if (value > 0xFFFFu) {
+        value = 0xFFFFu;
+    }
+    return (uint16_t)value;
+}
+
+ISR(TCB0_INT_vect) {
+    TCB0.INTFLAGS = TCB_CAPT_bm;
+    if (g_buzzer_active) {
+        PORTB.OUTTGL = BUZZER_PIN;
+    } else {
+        PORTB.OUTCLR = BUZZER_PIN;
+    }
+}
+
+void buzzer_init(void) {
+    PORTB.DIRSET = BUZZER_PIN;
+    PORTB.OUTCLR = BUZZER_PIN;
+
+    TCB0.CTRLB = TCB_CNTMODE_INT_gc;
+    TCB0.CCMP = 0u;
+    TCB0.INTCTRL = TCB_CAPT_bm;
+    TCB0.CTRLA = TCB_CLKSEL_DIV1_gc;
+}
+
 void buzzer_play(uint8_t button, uint32_t duration_ms, int8_t octave_shift) {
+    (void)duration_ms;
     size_t count = 0u;
-    const uint16_t *frequencies = tone_table_base_frequencies(&count);
+    const uint32_t *frequencies = tone_table_base_frequencies(&count);
     if (button == 0u || button > count) {
-        printf("[Buzzer] Invalid button %u\n", button);
         return;
     }
-    uint32_t frequency = apply_octave(frequencies[button - 1u], octave_shift);
-    printf("[Buzzer] Button %u -> %u Hz for %u ms\n", button, frequency, duration_ms);
+    uint32_t frequency_centi = apply_octave(frequencies[button - 1u], octave_shift);
+    uint16_t top = frequency_to_top(frequency_centi);
+    TCB0.CCMP = top;
+    g_buzzer_active = true;
+    TCB0.CTRLA |= TCB_ENABLE_bm;
 }
 
-/*
- * Stop any currently playing tone. In the simulator this is a diagnostic
- * message, while on hardware it would disable the PWM output.
- */
 void buzzer_silence(void) {
-    printf("[Buzzer] Silence\n");
+    g_buzzer_active = false;
+    PORTB.OUTCLR = BUZZER_PIN;
+    TCB0.CTRLA &= (uint8_t)~TCB_ENABLE_bm;
 }

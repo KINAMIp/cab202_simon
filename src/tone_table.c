@@ -1,21 +1,14 @@
 #include "tone_table.h"
 
-/*
- * Frequencies for the Simon buttons represented in Hertz. Integer values avoid
- * the need for floating-point support on the microcontroller target while still
- * providing musically recognisable tones.
- */
-static const uint16_t g_base_frequencies[] = {
-    392u,  /* G4 */
-    440u,  /* A4 */
-    494u,  /* B4 */
-    523u   /* C5 */
+// Frequencies expressed in centi-Hertz to retain two decimal places
+static const uint32_t g_base_frequencies[] = {
+    36484u,  // Tone 1: 364.84 Hz
+    48645u,  // Tone 2: 486.45 Hz
+    64860u,  // Tone 3: 648.60 Hz
+    86481u   // Tone 4: 864.81 Hz
 };
 
-/*
- * Return the tone table along with the element count for caller iteration.
- */
-const uint16_t *tone_table_base_frequencies(size_t *count) {
+const uint32_t *tone_table_base_frequencies(size_t *count) {
     if (count) {
         *count = sizeof(g_base_frequencies) / sizeof(g_base_frequencies[0]);
     }
