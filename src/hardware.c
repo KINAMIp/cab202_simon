@@ -10,16 +10,16 @@
  * register-level operations only.
  */
 
-#define DISPLAY_LEFT_ENABLE   PIN0_bm
-#define DISPLAY_RIGHT_ENABLE  PIN1_bm
+#define DISPLAY_LEFT_ENABLE   PIN1_bm
+#define DISPLAY_RIGHT_ENABLE  PIN2_bm
 
 #define DISPLAY_PORT          VPORTC
 #define DISPLAY_DIR           PORTC.DIR
-#define DISPLAY_DIGIT_PORT    VPORTD
-#define DISPLAY_DIGIT_DIR     PORTD.DIR
+#define DISPLAY_DIGIT_PORT    VPORTB
+#define DISPLAY_DIGIT_DIR     PORTB.DIR
 
-#define BUTTON_PORT           VPORTF
-#define BUTTON_DIR            PORTF.DIR
+#define BUTTON_PORT           VPORTA
+#define BUTTON_DIR            PORTA.DIR
 #define BUTTON_MASK_S1        PIN2_bm
 #define BUTTON_MASK_S2        PIN3_bm
 #define BUTTON_MASK_S3        PIN4_bm
@@ -116,13 +116,15 @@ void hardware_init(void)
     DISPLAY_DIGIT_PORT.OUT &= (uint8_t)~(DISPLAY_LEFT_ENABLE | DISPLAY_RIGHT_ENABLE);
 
     BUTTON_DIR &= (uint8_t)~BUTTON_MASK_ALL;
-    PORTF.PIN2CTRL = PORT_PULLUPEN_bm;
-    PORTF.PIN3CTRL = PORT_PULLUPEN_bm;
-    PORTF.PIN4CTRL = PORT_PULLUPEN_bm;
-    PORTF.PIN5CTRL = PORT_PULLUPEN_bm;
+    PORTA.PIN2CTRL = PORT_PULLUPEN_bm;
+    PORTA.PIN3CTRL = PORT_PULLUPEN_bm;
+    PORTA.PIN4CTRL = PORT_PULLUPEN_bm;
+    PORTA.PIN5CTRL = PORT_PULLUPEN_bm;
 
     BUZZER_DIR |= BUZZER_PIN;
+#ifdef PORTMUX_TCA0_PORTB_gc
     PORTMUX.TCAROUTEA = PORTMUX_TCA0_PORTB_gc;
+#endif
     TCA0.SINGLE.CTRLA = TCA_SINGLE_CLKSEL_DIV64_gc;
     TCA0.SINGLE.CTRLB = TCA_SINGLE_WGMODE_SINGLESLOPE_gc | TCA_SINGLE_CMP0EN_bm;
     TCA0.SINGLE.CMP0 = 0u;
@@ -132,7 +134,11 @@ void hardware_init(void)
     USART0.CTRLB = USART_RXEN_bm | USART_TXEN_bm;
 
     ADC0.CTRLA = ADC_ENABLE_bm;
+#if defined(ADC_REFSEL_VDD_gc) && defined(ADC_PRESC_DIV16_gc)
+    ADC0.CTRLC = ADC_REFSEL_VDD_gc | ADC_PRESC_DIV16_gc;
+#else
     ADC0.CTRLC = (ADC_REFSEL_VDDREF_gc << ADC_REFSEL_gp) | (ADC_PRESCALER_DIV16 << ADC_PRESC_gp);
+#endif
     ADC0.MUXPOS = ADC_MUXPOS_AIN6_gc;
 
     display_left_pattern = segment_table[0];
@@ -253,12 +259,26 @@ uint8_t hardware_read_buttons(void)
 /* Perform a blocking ADC conversion to obtain the potentiometer value. */
 uint16_t hardware_read_pot(void)
 {
+#if defined(ADC_STCONV_bm)
     ADC0.COMMAND = ADC_STCONV_bm;
     while ((ADC0.COMMAND & ADC_STCONV_bm) != 0u) {
     }
+#elif defined(ADC_COMMAND_STCONV_bm)
+    ADC0.COMMAND = ADC_COMMAND_STCONV_bm;
+    while ((ADC0.COMMAND & ADC_COMMAND_STCONV_bm) != 0u) {
+    }
+#else
+    ADC0.COMMAND = 0x01u;
+    while ((ADC0.COMMAND & 0x01u) != 0u) {
+    }
+#endif
     while ((ADC0.INTFLAGS & ADC_RESRDY_bm) == 0u) {
     }
+#if defined(__AVR_ATtiny1626__)
+    uint16_t value = ADC0.RESULT;
+#else
     uint16_t value = ADC0.RES;
+#endif
     ADC0.INTFLAGS = ADC_RESRDY_bm;
     return value;
 }
