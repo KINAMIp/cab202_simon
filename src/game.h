@@ -42,6 +42,7 @@ typedef struct {
     char name_buffer[SIMON_NAME_LENGTH];
     bool awaiting_seed;
     bool playback_tone_active;
+    bool pending_success;
     uint8_t current_colour;
     int8_t octave_shift;
 } simon_game_t;
