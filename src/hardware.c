@@ -36,7 +36,6 @@
 static volatile uint8_t display_left_pattern;
 static volatile uint8_t display_right_pattern;
 static volatile bool display_toggle;
-static int8_t buzzer_octave_shift;
 
 static const uint8_t segment_table[16] = {
     0b00111111u,
@@ -78,29 +77,6 @@ static const uint16_t buzzer_compare[4] = {
     44u
 };
 
-static uint16_t apply_octave_scale(uint16_t base)
-{
-    uint16_t value = base;
-    int8_t shift = buzzer_octave_shift;
-    if (shift > 0) {
-        uint8_t steps = (uint8_t)shift;
-        while (steps > 0u && value > 1u) {
-            value >>= 1;
-            steps--;
-        }
-        if (value == 0u) {
-            value = 1u;
-        }
-    } else if (shift < 0) {
-        uint8_t steps = (uint8_t)(-shift);
-        while (steps > 0u && value < 0x8000u) {
-            value <<= 1;
-            steps--;
-        }
-    }
-    return value;
-}
-
 /* Multiplex the dual 7-segment display every interrupt tick. */
 ISR(TCB0_INT_vect)
 {
@@ -138,7 +114,6 @@ void hardware_init(void)
     display_left_pattern = segment_table[0];
     display_right_pattern = segment_table[0];
     display_toggle = false;
-    buzzer_octave_shift = 0;
 
     TCB0.CCMP = 1500u;
     TCB0.CTRLB = TCB_CNTMODE_INT_gc;
@@ -167,17 +142,8 @@ void hardware_set_buzzer_tone(uint8_t tone_index)
     if (tone_index >= 4u) {
         return;
     }
-    uint16_t period = apply_octave_scale(buzzer_periods[tone_index]);
-    uint16_t compare = apply_octave_scale(buzzer_compare[tone_index]);
-    if (compare >= period) {
-        if (period > 1u) {
-            compare = (uint16_t)(period - 1u);
-        } else {
-            compare = 1u;
-        }
-    }
-    TCA0.SINGLE.PER = period;
-    TCA0.SINGLE.CMP0 = compare;
+    TCA0.SINGLE.PER = buzzer_periods[tone_index];
+    TCA0.SINGLE.CMP0 = buzzer_compare[tone_index];
     TCA0.SINGLE.CTRLA |= TCA_SINGLE_ENABLE_bm;
 }
 
@@ -186,21 +152,6 @@ void hardware_stop_buzzer(void)
 {
     TCA0.SINGLE.CTRLA &= (uint8_t)~TCA_SINGLE_ENABLE_bm;
     TCA0.SINGLE.CMP0 = 0u;
-}
-
-void hardware_set_buzzer_octave_shift(int8_t shift)
-{
-    if (shift > 2) {
-        shift = 2;
-    } else if (shift < -2) {
-        shift = -2;
-    }
-    buzzer_octave_shift = shift;
-}
-
-int8_t hardware_get_buzzer_octave_shift(void)
-{
-    return buzzer_octave_shift;
 }
 
 /* Present hexadecimal digits on the dual display. */

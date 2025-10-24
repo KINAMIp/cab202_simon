@@ -7,8 +7,6 @@
 #define SIMON_MAX_LEVEL          32u
 #define SIMON_HIGHSCORE_COUNT    5u
 #define SIMON_NAME_LENGTH        8u
-#define SIMON_OCTAVE_MIN         (-2)
-#define SIMON_OCTAVE_MAX         2
 
 typedef enum {
     SIMON_STATE_ATTRACT = 0,
@@ -43,7 +41,6 @@ typedef struct {
     bool awaiting_seed;
     bool playback_tone_active;
     uint8_t current_colour;
-    int8_t octave_shift;
 } simon_game_t;
 
 void game_init(simon_game_t *game);
