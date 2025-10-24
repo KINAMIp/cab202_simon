@@ -33,6 +33,9 @@
 
 #define ADC_PRESCALER_DIV16   0x04u
 
+#define SYSTEM_CLOCK_HZ       3000000u
+#define BUZZER_PRESCALER      64u
+
 #ifndef ADC_REFSEL_VDD_gc
 #define ADC_REFSEL_VDD_gc     ((0x00u) << ADC_REFSEL_gp)
 #endif
@@ -76,19 +79,73 @@ static const uint8_t idle_frames[4] = {
     0b00001000u
 };
 
-static const uint16_t buzzer_periods[4] = {
-    131u,
-    110u,
-    98u,
-    88u
+static const uint32_t buzzer_frequency_hz_x100[4] = {
+    36484u,
+    48652u,
+    58310u,
+    73061u
 };
 
-static const uint16_t buzzer_compare[4] = {
-    66u,
-    55u,
-    49u,
-    44u
-};
+static uint16_t buzzer_periods[4];
+static uint16_t buzzer_compare[4];
+
+static uint8_t pattern_from_button_mask(uint8_t mask)
+{
+    switch (mask & 0x0Fu) {
+    case 0x01u:
+        return 0b00100001u;
+    case 0x02u:
+        return 0b00100010u;
+    case 0x04u:
+        return 0b00100100u;
+    case 0x08u:
+        return 0b00101000u;
+    default:
+        break;
+    }
+    return 0u;
+}
+
+static uint16_t compute_period_from_frequency(uint32_t frequency_x100)
+{
+    if (frequency_x100 == 0u) {
+        return 0u;
+    }
+
+    uint32_t numerator = (uint32_t)SYSTEM_CLOCK_HZ * 100u;
+    uint32_t denominator = (uint32_t)BUZZER_PRESCALER * frequency_x100;
+    uint32_t period = (numerator + (denominator / 2u)) / denominator;
+
+    if (period == 0u) {
+        return 0u;
+    }
+
+    if (period > 0u) {
+        period--;
+    }
+
+    if (period > 0xFFFFu) {
+        period = 0xFFFFu;
+    }
+
+    return (uint16_t)period;
+}
+
+static void buzzer_init_tables(void)
+{
+    for (uint8_t index = 0u; index < 4u; index++) {
+        uint16_t period = compute_period_from_frequency(buzzer_frequency_hz_x100[index]);
+        if (period < 2u) {
+            period = 2u;
+        }
+        buzzer_periods[index] = period;
+        uint16_t compare = (uint16_t)((period + 1u) >> 1u);
+        if (compare == 0u) {
+            compare = 1u;
+        }
+        buzzer_compare[index] = compare;
+    }
+}
 
 static uint16_t apply_octave_scale(uint16_t base)
 {
@@ -153,6 +210,8 @@ void hardware_init(void)
     display_right_pattern = segment_table[0];
     display_toggle = false;
     buzzer_octave_shift = 0;
+
+    buzzer_init_tables();
 
     TCB0.CCMP = 1500u;
     TCB0.CTRLB = TCB_CNTMODE_INT_gc;
@@ -231,8 +290,12 @@ void hardware_display_segments(uint8_t left_digit, uint8_t right_digit)
 /* Present an arbitrary segment bitmap on both digits. */
 void hardware_display_pattern(uint8_t pattern)
 {
-    display_left_pattern = pattern;
-    display_right_pattern = pattern;
+    uint8_t segments = pattern;
+    if (pattern == 0x01u || pattern == 0x02u || pattern == 0x04u || pattern == 0x08u) {
+        segments = pattern_from_button_mask(pattern);
+    }
+    display_left_pattern = segments;
+    display_right_pattern = segments;
 }
 
 /* Step through a simple four-frame idle animation. */

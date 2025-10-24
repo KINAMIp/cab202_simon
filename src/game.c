@@ -16,7 +16,6 @@
 #define PLAYBACK_DELAY_MAX          1200u
 #define PLAYBACK_DELAY_RANGE        (PLAYBACK_DELAY_MAX - PLAYBACK_DELAY_MIN)
 #define PLAYBACK_DELAY_SCALE_BITS   10u
-#define PLAYBACK_GAP_SHIFT          1u
 #define LEVEL_ADVANCE_PAUSE         800u
 #define FAILURE_PAUSE               1200u
 #define NAME_TIMEOUT_MS             5000u
@@ -24,10 +23,10 @@
 #define IDLE_ANIMATION_FRAME_SHIFT   5u
 
 static const uint8_t display_patterns[4] = {
-    0b00100001u,
-    0b00100010u,
-    0b00100100u,
-    0b00101000u
+    0x01u,
+    0x02u,
+    0x04u,
+    0x08u
 };
 
 static const uint8_t success_pattern = 0b00111111u;
@@ -306,7 +305,7 @@ static void start_round(simon_game_t *game)
     }
     game->playback_seed = game->base_seed;
     game->playback_step = 0u;
-    game->countdown_ms = (uint16_t)(game->playback_delay_ms >> PLAYBACK_GAP_SHIFT);
+    game->countdown_ms = game->playback_delay_ms;
     game->playback_tone_active = false;
     game->state = SIMON_STATE_PLAYBACK;
     game->current_colour = 0u;
@@ -408,7 +407,7 @@ void game_tick_1ms(simon_game_t *game)
                     hardware_stop_buzzer();
                     hardware_display_pattern(0u);
                     game->playback_tone_active = false;
-                    game->countdown_ms = (uint16_t)(game->playback_delay_ms >> PLAYBACK_GAP_SHIFT);
+                    game->countdown_ms = game->playback_delay_ms;
                 } else {
                     if (game->playback_step >= game->level) {
                         begin_input_phase(game);
@@ -418,24 +417,20 @@ void game_tick_1ms(simon_game_t *game)
                         hardware_display_pattern(display_patterns[game->current_colour]);
                         game->playback_step++;
                         game->playback_tone_active = true;
-                        game->countdown_ms = (uint16_t)(game->playback_delay_ms >> PLAYBACK_GAP_SHIFT);
+                        game->countdown_ms = game->playback_delay_ms;
                     }
                 }
             }
         }
         break;
     case SIMON_STATE_INPUT:
-        if (game->countdown_ms > 0u) {
+        if (game->playback_tone_active && game->countdown_ms > 0u) {
             game->countdown_ms--;
             if (game->countdown_ms == 0u) {
-                if (game->playback_tone_active) {
-                    hardware_stop_buzzer();
-                    hardware_display_pattern(0u);
-                    game->playback_tone_active = false;
-                    game->countdown_ms = (uint16_t)(game->playback_delay_ms >> PLAYBACK_GAP_SHIFT);
-                } else {
-                    display_level_value(game->level);
-                }
+                hardware_stop_buzzer();
+                hardware_display_pattern(0u);
+                game->playback_tone_active = false;
+                display_level_value(game->level);
             }
         }
         break;
@@ -510,7 +505,7 @@ void game_handle_button(simon_game_t *game, uint8_t button_mask)
             hardware_set_buzzer_tone(button_index);
             hardware_display_pattern(display_patterns[button_index]);
             game->playback_tone_active = true;
-            game->countdown_ms = (uint16_t)(game->playback_delay_ms >> PLAYBACK_GAP_SHIFT);
+            game->countdown_ms = game->playback_delay_ms;
             if (game->input_step == game->level) {
                 hardware_stop_buzzer();
                 game->playback_tone_active = false;
