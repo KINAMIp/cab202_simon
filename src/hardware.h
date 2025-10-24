@@ -9,6 +9,8 @@ void hardware_task_display(void);
 
 void hardware_set_buzzer_tone(uint8_t tone_index);
 void hardware_stop_buzzer(void);
+void hardware_set_buzzer_octave_shift(int8_t shift);
+int8_t hardware_get_buzzer_octave_shift(void);
 
 void hardware_display_segments(uint8_t left_digit, uint8_t right_digit);
 void hardware_display_pattern(uint8_t pattern);
