@@ -20,8 +20,11 @@ int main(void)
         // Handle the event
         game_handle_event(&game, &event);
 
-        // Perform any game-related operations on each tick
-        game_tick_1ms(&game);
+        // Perform any game-related operations on each tick when not already
+        // handled through an explicit tick event.
+        if (event.type != BOARD_EVENT_TICK) {
+            game_tick_1ms(&game);
+        }
 
         // Update hardware if needed (LED, buzzer, etc.)
         hardware_task_display();

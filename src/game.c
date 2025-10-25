@@ -18,10 +18,10 @@
 #define OCTAVE_SHIFT_MIN            -3
 
 static const uint8_t display_patterns[4] = {
-    0x01u,
-    0x02u,
-    0x04u,
     0x08u,
+    0x04u,
+    0x02u,
+    0x01u,
 };
 
 static const uint8_t success_pattern = 0b01111111u;
@@ -610,6 +610,7 @@ void game_handle_event(simon_game_t *game, const board_event_t *event)
 {
     switch (event->type) {
     case BOARD_EVENT_TICK:
+        game_tick_1ms(game);
         break;
 
     case BOARD_EVENT_BUTTON: {
