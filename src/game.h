@@ -11,6 +11,15 @@
 #define SIMON_MAX_NAME_LENGTH 32
 #define SIMON_HIGHSCORE_ENTRIES 5
 
+typedef struct {
+    char name[SIMON_MAX_NAME_LENGTH];
+    uint16_t score;
+} simon_highscore_entry_t;
+
+typedef struct {
+    simon_highscore_entry_t entries[SIMON_HIGHSCORE_ENTRIES];
+} simon_highscore_table_t;
+
 typedef enum {
     SIMON_STATE_ATTRACT = 0,
     SIMON_STATE_PLAYBACK,
@@ -33,12 +42,20 @@ typedef struct {
     bool pot_update_pending;
     bool playback_tone_active;
     bool pending_success;
-    uint8_t octave_shift;
+    bool pending_highscore;
+    int8_t octave_shift;
     uint8_t name_length;
     uint8_t seed_length;
     uint16_t name_timeout;
     uint16_t pot_value;
     bool awaiting_seed;
+    uint16_t pending_pot_value;
+    uint16_t playback_timer;
+    uint16_t state_timer;
+    uint16_t pending_score;
+    uint8_t idle_frame;
+    char name_buffer[SIMON_MAX_NAME_LENGTH];
+    char seed_buffer[SIMON_MAX_NAME_LENGTH];
     simon_highscore_table_t highscores;
 } simon_game_t;
 
