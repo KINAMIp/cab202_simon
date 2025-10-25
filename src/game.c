@@ -12,8 +12,8 @@
 
 #include <string.h>
 
-#define PLAYBACK_DELAY_MIN          200u
-#define PLAYBACK_DELAY_MAX          1200u
+#define PLAYBACK_DELAY_MIN          250u
+#define PLAYBACK_DELAY_MAX          2000u
 #define PLAYBACK_DELAY_RANGE        (PLAYBACK_DELAY_MAX - PLAYBACK_DELAY_MIN)
 #define PLAYBACK_DELAY_SCALE_BITS   10u
 #define LEVEL_ADVANCE_PAUSE         800u
@@ -31,6 +31,22 @@ static const uint8_t display_patterns[4] = {
 
 static const uint8_t success_pattern = 0b01111111u;
 static const uint8_t failure_pattern = 0b01000000u;
+
+static uint16_t map_pot_to_delay(uint16_t value)
+{
+    uint32_t scaled = (uint32_t)value * (uint32_t)PLAYBACK_DELAY_RANGE;
+    scaled += (1u << (PLAYBACK_DELAY_SCALE_BITS - 1u));
+    scaled >>= PLAYBACK_DELAY_SCALE_BITS;
+    return (uint16_t)(PLAYBACK_DELAY_MIN + scaled);
+}
+
+static void apply_pending_playback_delay(simon_game_t *game)
+{
+    if (game->pot_update_pending) {
+        game->playback_delay_ms = map_pot_to_delay(game->pending_pot_value);
+        game->pot_update_pending = false;
+    }
+}
 
 static uint16_t playback_tone_on_duration(const simon_game_t *game)
 {
@@ -55,27 +71,19 @@ static uint16_t playback_tone_off_duration(const simon_game_t *game)
 }
 
 /* Append an unsigned integer to a buffer without division. */
-static void append_decimal(char *buffer, uint16_t *pos, uint16_t value)
+static void append_decimal(char *buffer, uint16_t *pos, uint32_t value)
 {
-    uint8_t hundreds = 0u;
-    while (value >= 100u) {
-        value -= 100u;
-        hundreds++;
-    }
-    if (hundreds > 0u) {
-        buffer[(*pos)++] = (char)('0' + hundreds);
-    }
+    char digits[6];
+    uint8_t count = 0u;
 
-    uint8_t tens = 0u;
-    while (value >= 10u) {
-        value -= 10u;
-        tens++;
-    }
-    if (hundreds > 0u || tens > 0u) {
-        buffer[(*pos)++] = (char)('0' + tens);
-    }
+    do {
+        digits[count++] = (char)('0' + (uint8_t)(value % 10u));
+        value /= 10u;
+    } while (value > 0u && count < sizeof digits);
 
-    buffer[(*pos)++] = (char)('0' + (uint8_t)value);
+    while (count > 0u) {
+        buffer[(*pos)++] = digits[--count];
+    }
 }
 
 static void display_level_value(uint16_t value)
@@ -160,13 +168,11 @@ static uint32_t lfsr_step(uint32_t value)
     if (value == 0u) {
         value = 0x1u;
     }
-    uint32_t feedback = 0u;
-    feedback ^= (value >> 0u) & 0x1u;
-    feedback ^= (value >> 2u) & 0x1u;
-    feedback ^= (value >> 3u) & 0x1u;
-    feedback ^= (value >> 5u) & 0x1u;
+    uint32_t bit = value & 0x1u;
     value >>= 1u;
-    value |= feedback << 31u;
+    if (bit != 0u) {
+        value ^= 0xE2024CABu;
+    }
     return value;
 }
 
@@ -190,39 +196,26 @@ static bool map_uart_to_button(char value, uint8_t *mask)
     switch (value) {
     case '1':
     case '!':
-    case 'a':
-    case 'A':
-    case 'h':
-    case 'H':
+    case 'q':
+    case 'Q':
         *mask = HARDWARE_BUTTON_S1_MASK;
         return true;
     case '2':
     case '@':
-    case 'k':
-    case 'K':
-    case 'j':
-    case 'J':
-    case ',':
+    case 'w':
+    case 'W':
         *mask = HARDWARE_BUTTON_S2_MASK;
         return true;
     case '3':
     case '#':
-    case 'l':
-    case 'L':
     case 'e':
     case 'E':
-    case 'd':
-    case 'D':
         *mask = HARDWARE_BUTTON_S3_MASK;
         return true;
     case '4':
     case '$':
-    case 'f':
-    case 'F':
-    case ';':
-    case ':':
-    case 'o':
-    case 'O':
+    case 'r':
+    case 'R':
         *mask = HARDWARE_BUTTON_S4_MASK;
         return true;
     default:
@@ -289,11 +282,7 @@ static void highscores_print(const simon_game_t *game)
     uint8_t index = 0u;
     while (index < SIMON_HIGHSCORE_COUNT) {
         const simon_highscore_t *entry = &game->highscores[index];
-        if (entry->name[0] == '\0') {
-            index++;
-            continue;
-        }
-        char buffer[24];
+        char buffer[SIMON_NAME_LENGTH + 8u];
         uint16_t pos = 0u;
         uint8_t name_index = 0u;
         while (name_index < SIMON_NAME_LENGTH && entry->name[name_index] != '\0') {
@@ -323,6 +312,9 @@ static void reset_game(simon_game_t *game)
     game->last_score = 0u;
     game->playback_seed = game->base_seed;
     game->input_seed = game->base_seed;
+    game->seed_length = 0u;
+    game->awaiting_seed = false;
+    apply_pending_playback_delay(game);
     game->playback_tone_active = false;
     game->pending_success = false;
     hardware_set_buzzer_octave_shift(game->octave_shift);
@@ -337,6 +329,7 @@ static void start_round(simon_game_t *game)
     if (game->level < SIMON_MAX_LEVEL) {
         game->level++;
     }
+    apply_pending_playback_delay(game);
     game->playback_seed = game->base_seed;
     game->playback_step = 0u;
     game->countdown_ms = playback_tone_off_duration(game);
@@ -419,8 +412,10 @@ static void adjust_octave(simon_game_t *game, int8_t delta)
 void game_init(simon_game_t *game)
 {
     memset(game, 0, sizeof *game);
-    game->base_seed = 0x13579BDFu;
-    game->playback_delay_ms = 600u;
+    game->base_seed = 0x12345678u;
+    game->playback_delay_ms = map_pot_to_delay(0u);
+    game->pending_pot_value = 0u;
+    game->pot_update_pending = false;
     game->octave_shift = 0;
     hardware_set_buzzer_octave_shift(0);
     highscores_reset(game);
@@ -576,12 +571,6 @@ void game_handle_button(simon_game_t *game, uint8_t button_mask)
 static void apply_command(simon_game_t *game, char value)
 {
     switch (value) {
-    case 'r':
-    case 'R':
-        game->octave_shift = 0;
-        hardware_set_buzzer_octave_shift(0);
-        reset_game(game);
-        break;
     case 's':
     case 'S':
         highscores_print(game);
@@ -590,22 +579,30 @@ static void apply_command(simon_game_t *game, char value)
     case 'D':
         uart_send_delay(game);
         break;
-    case 'q':
-    case 'Q':
+    case 'l':
+    case 'L':
+    case 'j':
+    case 'J':
         adjust_octave(game, (int8_t)-1);
         break;
-    case 'w':
-    case 'W':
+    case 'k':
+    case 'K':
+    case 'i':
+    case 'I':
         adjust_octave(game, 1);
         break;
     case 'p':
     case 'P':
         uart_send_score("SCORE", game->last_score);
         break;
-    case 'n':
-    case 'N':
-        game->base_seed = game->base_seed ^ 0x5A5A5A5Au;
-        start_round(game);
+    case '0':
+        game->octave_shift = 0;
+        hardware_set_buzzer_octave_shift(0);
+        reset_game(game);
+        break;
+    case 'h':
+    case 'H':
+        highscores_print(game);
         break;
     default:
         break;
@@ -640,29 +637,46 @@ void game_handle_uart_char(simon_game_t *game, char value)
         return;
     }
 
-    if (value == '#') {
-        game->awaiting_seed = true;
-        game->name_length = 0u;
-        game->base_seed = 0u;
+    if (game->awaiting_seed) {
+        if (value == '\r' || value == '\n') {
+            if (game->seed_length == 8u) {
+                if ((game->base_seed & 0x1u) == 0u) {
+                    game->base_seed |= 0x1u;
+                }
+                if (game->base_seed == 0u) {
+                    game->base_seed = 0x1u;
+                }
+                reset_game(game);
+            }
+            game->awaiting_seed = false;
+            game->seed_length = 0u;
+            return;
+        }
+        uint8_t digit;
+        if (value >= '0' && value <= '9') {
+            digit = (uint8_t)(value - '0');
+        } else if (value >= 'A' && value <= 'F') {
+            digit = (uint8_t)(value - 'A' + 10u);
+        } else if (value >= 'a' && value <= 'f') {
+            digit = (uint8_t)(value - 'a' + 10u);
+        } else {
+            game->awaiting_seed = false;
+            game->seed_length = 0u;
+            return;
+        }
+        if (game->seed_length < 8u) {
+            game->base_seed = (game->base_seed << 4u) | (uint32_t)digit;
+            game->seed_length++;
+        } else {
+            return;
+        }
         return;
     }
 
-    if (game->awaiting_seed) {
-        if (value >= '0' && value <= '9') {
-            game->base_seed = (game->base_seed << 4u) | (uint32_t)(value - '0');
-            game->name_length++;
-        } else if (value >= 'A' && value <= 'F') {
-            game->base_seed = (game->base_seed << 4u) | (uint32_t)(value - 'A' + 10u);
-            game->name_length++;
-        } else if (value >= 'a' && value <= 'f') {
-            game->base_seed = (game->base_seed << 4u) | (uint32_t)(value - 'a' + 10u);
-            game->name_length++;
-        }
-        if (game->name_length >= 8u) {
-            game->awaiting_seed = false;
-            game->base_seed |= 0x1u;
-            reset_game(game);
-        }
+    if (value == 'o' || value == 'O') {
+        game->awaiting_seed = true;
+        game->seed_length = 0u;
+        game->base_seed = 0u;
         return;
     }
 
@@ -678,10 +692,16 @@ void game_handle_uart_char(simon_game_t *game, char value)
 /* Map the potentiometer reading into a playback delay. */
 void game_update_playback_delay(simon_game_t *game, uint16_t pot_value)
 {
-    uint32_t scaled = (uint32_t)pot_value * PLAYBACK_DELAY_RANGE;
-    scaled >>= PLAYBACK_DELAY_SCALE_BITS;
-    uint16_t new_delay = (uint16_t)(PLAYBACK_DELAY_MIN + scaled);
-    if (new_delay != game->playback_delay_ms) {
-        game->playback_delay_ms = new_delay;
+    game->pending_pot_value = pot_value;
+    switch (game->state) {
+    case SIMON_STATE_ATTRACT:
+    case SIMON_STATE_FAILURE:
+    case SIMON_STATE_NAME_ENTRY:
+        game->playback_delay_ms = map_pot_to_delay(pot_value);
+        game->pot_update_pending = false;
+        break;
+    default:
+        game->pot_update_pending = true;
+        break;
     }
 }
