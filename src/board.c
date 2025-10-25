@@ -1,5 +1,4 @@
 #include "board.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -108,8 +107,10 @@ static board_event_t parse_line(char *line)
         if (end != line + 4) {
             if (value < 0) {
                 value = 0;
-            } else if (value > 1023) {
-                value = 1023;
+            } else {
+                if (value > 1023) {
+                    value = 1023;
+                }
             }
             board_event_t event = {
                 .type = BOARD_EVENT_POT,
@@ -119,75 +120,64 @@ static board_event_t parse_line(char *line)
         }
     }
 
-    board_event_t event = {.type = BOARD_EVENT_NONE};
-    return event;
+    return (board_event_t){.type = BOARD_EVENT_NONE};
 }
 
 board_event_t board_wait_for_event(void)
 {
-    char line[128];
-    if (!fgets(line, sizeof line, stdin)) {
-        board_event_t event = {.type = BOARD_EVENT_QUIT};
-        return event;
-    }
-
-    board_event_t event = parse_line(line);
-    if (event.type == BOARD_EVENT_NONE) {
-        puts("Unrecognised input. Try again.");
-        event = make_tick_event();
-    }
+    char line[BOARD_MAX_TEXT];
 
     fputs(PROMPT, stdout);
     fflush(stdout);
-    return event;
+
+    if (fgets(line, sizeof(line), stdin) != NULL) {
+        return parse_line(line);
+    }
+
+    return make_tick_event();
 }
 
 void board_show_message(const char *message)
 {
-    puts(message);
+    printf("%s\n", message);
 }
 
 void board_show_prompt(const char *prompt)
 {
-    printf("%s\n", prompt);
+    printf("%s", prompt);
 }
 
 void board_show_color(uint8_t colour_index)
 {
-    static const char *names[] = {"RED", "GREEN", "BLUE", "YELLOW"};
-    const char *label = "UNKNOWN";
-    if (colour_index < sizeof(names) / sizeof(names[0])) {
-        label = names[colour_index];
-    }
-    printf("PLAY: %s\n", label);
+    printf("Color: %u\n", colour_index);
 }
 
 void board_show_idle_animation(void)
 {
-    puts("(idle) waiting for player...");
+    printf("Idle animation running...\n");
 }
 
 void board_show_score(uint16_t score)
 {
-    printf("Score: %u\n", (unsigned)score);
+    printf("Score: %u\n", score);
 }
 
 void board_show_playback_position(uint8_t step, uint8_t total)
 {
-    printf("Playback step %u/%u\n", (unsigned)(step + 1), (unsigned)total);
+    printf("Playback Position: %u/%u\n", step, total);
 }
 
 void board_show_failure(uint16_t score)
 {
-    printf("FAIL! Final score: %u\n", (unsigned)score);
+    printf("Failure! Score: %u\n", score);
 }
 
 void board_show_success(uint16_t level)
 {
-    printf("Success! Advancing to level %u\n", (unsigned)level);
+    printf("Success! Level: %u\n", level);
 }
 
 void board_show_high_scores(const char *table_representation)
 {
-    printf("High Scores:\n%s\n", table_representation);
+    printf("High Scores:\n%s", table_representation);
 }

@@ -1,8 +1,8 @@
 #ifndef HARDWARE_H
 #define HARDWARE_H
 
-#include <stdbool.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 void hardware_init(void);
 void hardware_task_display(void);
@@ -17,11 +17,6 @@ void hardware_display_pattern(uint8_t pattern);
 void hardware_display_idle_animation(uint8_t frame);
 
 uint8_t hardware_read_buttons(void);
-#define HARDWARE_BUTTON_S1_MASK 0x01u
-#define HARDWARE_BUTTON_S2_MASK 0x02u
-#define HARDWARE_BUTTON_S3_MASK 0x04u
-#define HARDWARE_BUTTON_S4_MASK 0x08u
-#define HARDWARE_BUTTON_ALL_MASK (HARDWARE_BUTTON_S1_MASK | HARDWARE_BUTTON_S2_MASK | HARDWARE_BUTTON_S3_MASK | HARDWARE_BUTTON_S4_MASK)
 uint16_t hardware_read_pot(void);
 
 bool hardware_uart_read(char *value);
