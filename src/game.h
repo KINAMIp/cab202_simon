@@ -6,7 +6,7 @@
 
 #define SIMON_MAX_LEVEL          32u
 #define SIMON_HIGHSCORE_COUNT    5u
-#define SIMON_NAME_LENGTH        8u
+#define SIMON_NAME_LENGTH        21u
 #define SIMON_OCTAVE_MIN         (-2)
 #define SIMON_OCTAVE_MAX         2
 
@@ -31,6 +31,7 @@ typedef struct {
     uint32_t playback_seed;
     uint32_t input_seed;
     uint16_t playback_delay_ms;
+    uint16_t pending_pot_value;
     uint16_t countdown_ms;
     uint16_t idle_ticks;
     uint16_t name_timeout;
@@ -39,8 +40,10 @@ typedef struct {
     uint8_t playback_step;
     uint8_t input_step;
     uint8_t name_length;
+    uint8_t seed_length;
     char name_buffer[SIMON_NAME_LENGTH];
     bool awaiting_seed;
+    bool pot_update_pending;
     bool playback_tone_active;
     bool pending_success;
     uint8_t current_colour;
