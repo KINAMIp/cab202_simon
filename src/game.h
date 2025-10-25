@@ -30,7 +30,6 @@ typedef enum {
 } simon_state_t;
 
 typedef struct {
-    uint8_t sequence[SIMON_MAX_SEQUENCE];
     uint8_t level;
     uint8_t playback_step;
     uint8_t input_step;
@@ -39,6 +38,9 @@ typedef struct {
     uint16_t score;
     simon_state_t state;
     uint32_t rng_state;
+    uint32_t sequence_seed;
+    uint32_t playback_state;
+    uint32_t input_state;
     bool pot_update_pending;
     bool playback_tone_active;
     bool pending_success;

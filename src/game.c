@@ -27,6 +27,23 @@ static const uint8_t display_patterns[4] = {
 static const uint8_t success_pattern = 0b01111111u;
 static const uint8_t failure_pattern = 0b01000000u;
 
+static uint8_t lfsr_next_from_state(uint32_t *state)
+{
+    uint32_t value = *state;
+    if (value == 0u) {
+        value = 0xA5A5A5A5u;
+    }
+
+    uint32_t lsb = value & 1u;
+    value >>= 1u;
+    if (lsb != 0u) {
+        value ^= 0x80200003u;
+    }
+
+    *state = value;
+    return (uint8_t)(value & 0x03u);
+}
+
 static uint16_t map_pot_to_delay(uint16_t value)
 {
     uint32_t scaled = (uint32_t)value * (uint32_t)PLAYBACK_DELAY_RANGE;
@@ -231,27 +248,10 @@ static void reset_round_state(simon_game_t *game)
     game->state_timer = 0u;
 }
 
-static uint8_t lfsr_next_colour(simon_game_t *game)
-{
-    uint32_t value = game->rng_state;
-    if (value == 0u) {
-        value = 0xA5A5A5A5u;
-    }
-
-    uint32_t lsb = value & 1u;
-    value >>= 1;
-    if (lsb != 0u) {
-        value ^= 0x80200003u;
-    }
-
-    game->rng_state = value;
-    return (uint8_t)(value & 0x03u);
-}
-
 static void extend_sequence(simon_game_t *game)
 {
     if (game->level < SIMON_MAX_SEQUENCE) {
-        game->sequence[game->level] = lfsr_next_colour(game);
+        (void)lfsr_next_from_state(&game->rng_state);
         game->level++;
     }
 }
@@ -261,6 +261,7 @@ static void begin_playback(simon_game_t *game)
     apply_pending_playback_delay(game);
     reset_round_state(game);
     game->state = SIMON_STATE_PLAYBACK;
+    game->playback_state = game->sequence_seed;
     hardware_display_pattern(0u);
     board_show_playback_position(0u, game->level);
 }
@@ -364,7 +365,6 @@ static void show_highscores(const simon_game_t *game)
 
 void game_init(simon_game_t *game)
 {
-    memset(game->sequence, 0, sizeof game->sequence);
     game->level = 0u;
     game->playback_step = 0u;
     game->input_step = 0u;
@@ -373,6 +373,9 @@ void game_init(simon_game_t *game)
     game->score = 0u;
     game->state = SIMON_STATE_ATTRACT;
     game->rng_state = 0x1u;
+    game->sequence_seed = game->rng_state;
+    game->playback_state = game->rng_state;
+    game->input_state = game->rng_state;
     game->pot_update_pending = false;
     game->playback_tone_active = false;
     game->pending_success = false;
@@ -413,6 +416,7 @@ void game_tick_1ms(simon_game_t *game)
         if (game->playback_step >= game->level) {
             game->state = SIMON_STATE_WAIT_INPUT;
             game->input_step = 0u;
+            game->input_state = game->sequence_seed;
             hardware_stop_buzzer();
             hardware_display_pattern(0u);
             break;
@@ -424,7 +428,7 @@ void game_tick_1ms(simon_game_t *game)
         }
 
         if (!game->playback_tone_active) {
-            uint8_t index = game->sequence[game->playback_step];
+            uint8_t index = lfsr_next_from_state(&game->playback_state);
             hardware_set_buzzer_tone(index);
             hardware_display_pattern(display_patterns[index]);
             board_show_playback_position(game->playback_step + 1u, game->level);
@@ -500,7 +504,13 @@ void game_handle_button(simon_game_t *game, uint8_t button_mask)
     uint8_t button = (uint8_t)index;
     board_show_color(button);
 
-    if (button == game->sequence[game->input_step]) {
+    if (game->input_step >= game->level) {
+        return;
+    }
+
+    uint8_t expected = lfsr_next_from_state(&game->input_state);
+
+    if (button == expected) {
         game->input_step++;
         board_show_playback_position(game->input_step, game->level);
         if (game->input_step >= game->level) {
@@ -639,7 +649,6 @@ void game_handle_event(simon_game_t *game, const board_event_t *event)
 
 static void reset_for_new_game(simon_game_t *game)
 {
-    memset(game->sequence, 0, sizeof game->sequence);
     game->level = 0u;
     game->playback_step = 0u;
     game->input_step = 0u;
@@ -649,6 +658,9 @@ static void reset_for_new_game(simon_game_t *game)
     game->pending_success = false;
     game->pending_highscore = false;
     game->pending_score = 0u;
+    game->sequence_seed = game->rng_state;
+    game->playback_state = game->sequence_seed;
+    game->input_state = game->sequence_seed;
     hardware_display_pattern(0u);
 }
 
@@ -666,6 +678,9 @@ void game_start(simon_game_t *game)
         game->rng_state = 0x1u;
     }
     game->rng_state ^= (uint32_t)(game->pot_value + 1u) * 1103515245u;
+    game->sequence_seed = game->rng_state;
+    game->playback_state = game->sequence_seed;
+    game->input_state = game->sequence_seed;
     extend_sequence(game);
     begin_playback(game);
     board_show_message("Starting game...");
