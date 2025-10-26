@@ -1,4 +1,5 @@
 #include "board.h"
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,33 @@ static const button_alias_t button_aliases[] = {
     {"s3", BOARD_BUTTON_S3},
     {"s4", BOARD_BUTTON_S4},
 };
+
+static bool equals_ignore_case(const char *a, const char *b)
+{
+    while (*a != '\0' && *b != '\0') {
+        if (tolower((unsigned char)*a) != tolower((unsigned char)*b)) {
+            return false;
+        }
+        ++a;
+        ++b;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+static bool starts_with_ignore_case(const char *text, const char *prefix)
+{
+    while (*prefix != '\0') {
+        if (*text == '\0') {
+            return false;
+        }
+        if (tolower((unsigned char)*text) != tolower((unsigned char)*prefix)) {
+            return false;
+        }
+        ++text;
+        ++prefix;
+    }
+    return true;
+}
 
 static void trim(char *text)
 {
@@ -67,17 +95,17 @@ static board_event_t parse_line(char *line)
         return make_tick_event();
     }
 
-    if (strcmp(line, "tick") == 0) {
+    if (equals_ignore_case(line, "tick")) {
         return make_tick_event();
     }
 
-    if (strcmp(line, "quit") == 0) {
+    if (equals_ignore_case(line, "quit")) {
         board_event_t event = {.type = BOARD_EVENT_QUIT};
         return event;
     }
 
     for (size_t i = 0; i < sizeof(button_aliases) / sizeof(button_aliases[0]); ++i) {
-        if (strcmp(line, button_aliases[i].name) == 0) {
+        if (equals_ignore_case(line, button_aliases[i].name)) {
             board_event_t event = {
                 .type = BOARD_EVENT_BUTTON,
                 .data.button = {.button = button_aliases[i].button, .long_press = false},
@@ -86,7 +114,7 @@ static board_event_t parse_line(char *line)
         }
     }
 
-    if (strncmp(line, "cmd ", 4) == 0 && line[4] != '\0') {
+    if (starts_with_ignore_case(line, "cmd ") && line[4] != '\0') {
         board_event_t event = {
             .type = BOARD_EVENT_COMMAND,
             .data.command = {.value = line[4]},
@@ -94,14 +122,14 @@ static board_event_t parse_line(char *line)
         return event;
     }
 
-    if (strncmp(line, "name ", 5) == 0 && line[5] != '\0') {
+    if (starts_with_ignore_case(line, "name ") && line[5] != '\0') {
         board_event_t event = {.type = BOARD_EVENT_TEXT};
         strncpy(event.data.text.text, line + 5, BOARD_MAX_TEXT - 1);
         event.data.text.text[BOARD_MAX_TEXT - 1] = '\0';
         return event;
     }
 
-    if (strncmp(line, "pot ", 4) == 0 && line[4] != '\0') {
+    if (starts_with_ignore_case(line, "pot ") && line[4] != '\0') {
         char *end = NULL;
         long value = strtol(line + 4, &end, 10);
         if (end != line + 4) {
